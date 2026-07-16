@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FNOL KPI Drilldown - Mockup</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+    .top { display:flex; align-items:center; justify-content:space-between; }
+    .kpi { display:flex; gap:18px; align-items:center; }
+    .kpi-card { background:#f7f9fc; padding:18px 22px; border-radius:8px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+    .kpi-value { font-size:36px; font-weight:700; }
+    .kpi-sub { font-size:14px; color:#555; }
+    .trend { display:flex; flex-direction:column; align-items:center; }
+    .trend .icon { font-size:28px; margin-bottom:6px; }
+    .filters { margin-top:18px; display:flex; gap:16px; align-items:center; }
+    .controls { margin-top:18px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+    #chart-container { margin-top:18px; background:#fff; padding:12px; border-radius:8px; }
+    table { width:100%; border-collapse:collapse; margin-top:12px; }
+    th,td { padding:8px 10px; border-bottom:1px solid #eee; text-align:left; }
+    .small { font-size:13px; color:#666; }
+    .btn { background:#0366d6; color:#fff; padding:8px 12px; border-radius:6px; text-decoration:none; }
+    .controls input[type=date], select { padding:6px 8px; }
+    .region-list { display:flex; gap:8px; flex-wrap:wrap; }
+    .legend { display:flex; gap:12px; align-items:center; margin-top:8px; }
+    .up { color:green; }
+    .down { color:red; }
+    .same { color:grey; }
+    footer { margin-top:18px; font-size:13px; color:#444; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <div class="top">
+    <h1>FNOL Drilldown</h1>
+    <a class="btn" href="../index.html">Back to Dashboard</a>
+  </div>
+
+  <div class="kpi">
+    <div class="kpi-card">
+      <div class="kpi-value" id="kpiValue">—</div>
+      <div class="kpi-sub" id="kpiMonth">Month: —</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-value" id="kpiPct">—</div>
+      <div class="kpi-sub">Change vs previous month</div>
+    </div>
+    <div class="trend">
+      <div class="icon" id="trendIcon">—</div>
+      <div class="small" id="trendText">Trend</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div>
+      <label class="small">KPI month</label><br />
+      <input type="month" id="kpiMonthPicker" />
+    </div>
+
+    <div>
+      <label class="small">Graph range</label><br />
+      <input type="date" id="rangeStart" />
+      <input type="date" id="rangeEnd" />
+    </div>
+
+    <div>
+      <label class="small">Region filter</label>
+      <div class="region-list" id="regionFilters"></div>
+    </div>
+
+    <div>
+      <label class="small">Search details</label><br />
+      <input type="text" id="searchText" placeholder="policy id or description" />
+    </div>
+
+    <div style="align-self:end">
+      <button id="applyBtn" class="btn">Apply filters</button>
+    </div>
+  </div>
+
+  <div id="chart-container">
+    <canvas id="trendChart" height="120"></canvas>
+    <div class="legend">
+      <div class="small">Chart shows FNOL counts by day for the selected date range and filters.</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:18px">Details</h3>
+  <div style="overflow:auto; max-height:360px">
+    <table id="detailsTable">
+      <thead>
+        <tr><th>Date</th><th>Policy</th><th>Region</th><th>Amount</th><th>Description</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <footer>
+    Mockup: loads data/fnol_data.csv and recomputes KPI, chart, and table according to the filters above.
+  </footer>
+
+<script>
+  const csvPath = 'data/fnol_data.csv';
+  let rawData = [];
+  let regions = new Set();
+  let chart = null;
+
+  function parseDateIso(s) {
+    return new Date(s + 'T00:00:00');
+  }
+
+  function formatDate(d) {
+    return d.toISOString().slice(0,10);
+  }
+
+  function monthKey(date) {
+    return date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0');
+  }
+
+  function updateRegionFilters() {
+    const container = document.getElementById('regionFilters');
+    container.innerHTML = '';
+    [...regions].sort().forEach(r => {
+      const id = 'reg_' + r.replace(/\s+/g,'_');
+      const wrapper = document.createElement('label');
+      wrapper.style.display='inline-flex'; wrapper.style.alignItems='center'; wrapper.style.gap='6px';
+      const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = true; cb.value = r; cb.id = id;
+      wrapper.appendChild(cb);
+      const span = document.createElement('span'); span.textContent = r; span.className='small';
+      wrapper.appendChild(span);
+      container.appendChild(wrapper);
+    });
+  }
+
+  function getFilters() {
+    const kpiMonth = document.getElementById('kpiMonthPicker').value; // YYYY-MM
+    const start = document.getElementById('rangeStart').value;
+    const end = document.getElementById('rangeEnd').value;
+    const regionChecked = [...document.querySelectorAll('#regionFilters input[type=checkbox]')]
+      .filter(i=>i.checked).map(i=>i.value);
+    const search = document.getElementById('searchText').value.trim().toLowerCase();
+    return { kpiMonth, start, end, regionChecked, search };
+  }
+
+  function applyFilters() {
+    const { kpiMonth, start, end, regionChecked, search } = getFilters();
+
+    // Build filtered dataset for table and chart
+    let filtered = rawData.filter(r => regionChecked.includes(r.region));
+
+    if (search) {
+      filtered = filtered.filter(r => r.policy_id.toLowerCase().includes(search) || r.description.toLowerCase().includes(search));
+    }
+
+    // If range specified, filter by date range
+    if (start) filtered = filtered.filter(r => r._date >= parseDateIso(start));
+    if (end) filtered = filtered.filter(r => r._date <= parseDateIso(end));
+
+    // Compute KPI: count of FNOLs in the selected KPI month (and respecting other filters)
+    let kpiCount = 0, prevCount = 0;
+    if (kpiMonth) {
+      const [y,m] = kpiMonth.split('-').map(Number);
+      filtered.forEach(r => {
+        if (r._date.getFullYear() === y && (r._date.getMonth()+1) === m) kpiCount++;
+      });
+      // previous month
+      let py = y; let pm = m-1; if (pm === 0) { pm = 12; py = y-1; }
+      rawData.forEach(r => {
+        // prev month should also respect region and search filters and date range
+        if (!regionChecked.includes(r.region)) return;
+        if (search && !(r.policy_id.toLowerCase().includes(search) || r.description.toLowerCase().includes(search))) return;
+        if (start && r._date < parseDateIso(start)) return;
+        if (end && r._date > parseDateIso(end)) return;
+        if (r._date.getFullYear() === py && (r._date.getMonth()+1) === pm) prevCount++;
+      });
+    } else {
+      // if no kpiMonth chosen, default to current month of today
+      const today = new Date();
+      const y = today.getFullYear(); const m = today.getMonth()+1;
+      filtered.forEach(r => { if (r._date.getFullYear()===y && (r._date.getMonth()+1)===m) kpiCount++; });
+      let py = y; let pm = m-1; if (pm===0){pm=12;py=y-1}
+      rawData.forEach(r => {
+        if (!regionChecked.includes(r.region)) return;
+        if (search && !(r.policy_id.toLowerCase().includes(search) || r.description.toLowerCase().includes(search))) return;
+        if (start && r._date < parseDateIso(start)) return;
+        if (end && r._date > parseDateIso(end)) return;
+        if (r._date.getFullYear() === py && (r._date.getMonth()+1) === pm) prevCount++;
+      });
+    }
+
+    // Update KPI display
+    document.getElementById('kpiValue').textContent = kpiCount;
+    document.getElementById('kpiMonth').textContent = 'Month: ' + (kpiMonth || new Date().toISOString().slice(0,7));
+    let pctText = '—'; let pct = null; let trend = 'same';
+    if (prevCount === 0 && kpiCount === 0) {
+      pctText = '0%'; trend = 'same';
+    } else if (prevCount === 0) {
+      pctText = '100%+'; trend = 'up';
+    } else {
+      pct = ((kpiCount - prevCount) / prevCount) * 100;
+      pctText = (pct>0?'+':'') + pct.toFixed(1) + '%';
+      if (pct > 0) trend='up'; else if (pct < 0) trend='down'; else trend='same';
+    }
+    const pctEl = document.getElementById('kpiPct');
+    pctEl.textContent = pctText;
+    const iconEl = document.getElementById('trendIcon');
+    const textEl = document.getElementById('trendText');
+    iconEl.className = '';
+    if (trend === 'up') { iconEl.textContent='⬆'; iconEl.classList.add('up'); textEl.textContent='Trending up'; }
+    else if (trend === 'down') { iconEl.textContent='⬇'; iconEl.classList.add('down'); textEl.textContent='Trending down'; }
+    else { iconEl.textContent='▬'; iconEl.classList.add('same'); textEl.textContent='No change'; }
+
+    // Update table with filtered data (but scoped to region & search & date range)
+    const tbody = document.querySelector('#detailsTable tbody');
+    tbody.innerHTML = '';
+    filtered.sort((a,b)=>a._date - b._date).forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${formatDate(r._date)}</td><td>${r.policy_id}</td><td>${r.region}</td><td>${r.amount}</td><td>${r.description}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    // Update chart: aggregate by day within provided range (or auto range)
+    let chartStart = start ? parseDateIso(start) : null;
+    let chartEnd = end ? parseDateIso(end) : null;
+    if (!chartStart || !chartEnd) {
+      if (filtered.length) {
+        const dates = filtered.map(r=>r._date);
+        chartStart = chartStart || new Date(Math.min(...dates));
+        chartEnd = chartEnd || new Date(Math.max(...dates));
+      } else {
+        const today = new Date(); chartEnd = chartEnd || today; chartStart = chartStart || new Date(today - 7*24*3600*1000);
+      }
+    }
+
+    // build daily bins
+    const days = [];
+    for (let d = new Date(chartStart); d <= chartEnd; d.setDate(d.getDate()+1)) {
+      days.push(new Date(d));
+    }
+    const counts = days.map(day => {
+      const startOfDay = new Date(day); startOfDay.setHours(0,0,0,0);
+      const endOfDay = new Date(day); endOfDay.setHours(23,59,59,999);
+      return filtered.filter(r => r._date >= startOfDay && r._date <= endOfDay).length;
+    });
+
+    updateChart(days.map(d=>formatDate(d)), counts);
+  }
+
+  function updateChart(labels, data) {
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{ label: 'FNOL count', data, borderColor:'#0366d6', backgroundColor:'rgba(3,102,214,0.08)', tension:0.2 }]
+      },
+      options: { scales: { x: { display:true }, y: { beginAtZero:true, precision:0 } } }
+    });
+  }
+
+  function initFromData() {
+    // fill region list
+    rawData.forEach(r => regions.add(r.region));
+    updateRegionFilters();
+
+    // set default month picker to current month
+    const today = new Date();
+    document.getElementById('kpiMonthPicker').value = today.toISOString().slice(0,7);
+
+    // set default chart range to last 30 days
+    const e = new Date(); const s = new Date(e - 29*24*3600*1000);
+    document.getElementById('rangeStart').value = formatDate(s);
+    document.getElementById('rangeEnd').value = formatDate(e);
+
+    applyFilters();
+  }
+
+  document.getElementById('applyBtn').addEventListener('click', applyFilters);
+
+  // load CSV
+  Papa.parse(csvPath, { download:true, header:true, skipEmptyLines:true,
+    complete: function(results) {
+      rawData = results.data.map(r => {
+        const obj = {
+          policy_id: r.policy_id,
+          fnol_date: r.fnol_date,
+          region: r.region,
+          amount: r.amount,
+          description: r.description,
+          _date: parseDateIso(r.fnol_date)
+        };
+        return obj;
+      });
+      initFromData();
+    }
+  });
+
+</script>
+</body>
+</html>

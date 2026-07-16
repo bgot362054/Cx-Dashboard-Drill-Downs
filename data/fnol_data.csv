@@ -1,0 +1,21 @@
+policy_id,fnol_date,region,amount,description
+P1001,2026-05-03,North,1200,Wind damage
+P1002,2026-05-10,South,800,Hail
+P1003,2026-05-15,East,450,Theft
+P1004,2026-06-02,West,670,Accident
+P1005,2026-06-05,North,300,Minor water
+P1006,2026-06-12,South,1500,Fire
+P1007,2026-06-20,Central,200,Glass
+P1008,2026-06-27,East,900,Theft
+P1009,2026-07-01,North,1100,Wind damage
+P1010,2026-07-03,South,700,Accident
+P1011,2026-07-04,West,450,Minor water
+P1012,2026-07-06,Central,230,Glass
+P1013,2026-07-08,East,1600,Fire
+P1014,2026-07-09,North,350,Theft
+P1015,2026-07-10,South,980,Accident
+P1016,2026-07-11,Central,1250,Fire
+P1017,2026-07-12,East,400,Theft
+P1018,2026-07-13,West,600,Wind damage
+P1019,2026-07-14,North,75,Minor water
+P1020,2026-07-15,South,250,Glass
